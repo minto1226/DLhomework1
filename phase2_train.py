@@ -8,57 +8,54 @@ does not download data or use a neural-network framework/autodiff.
 """
 
 import argparse
-import gzip
-import struct
+import os
 from pathlib import Path
-
 import numpy as np
+from PIL import Image
 
 
-def read_images(path):
-    """Read IDX image bytes; normalize one batch at a time during training."""
-    with gzip.open(path, "rb") as file:
-        data = file.read()
-    if len(data) < 16:
-        raise ValueError(f"{path}: image header is incomplete")
-    magic, count, rows, columns = struct.unpack(">IIII", data[:16])
-    if magic != 2051 or (rows, columns) != (28, 28):
-        raise ValueError(f"{path}: expected IDX images with shape 28 x 28")
-    if count == 0 or len(data) != 16 + count * rows * columns:
-        raise ValueError(f"{path}: image count or payload size is invalid")
-    return np.frombuffer(data, dtype=np.uint8, offset=16).reshape(count, 784)
+def load_training_pngs(train_dir):
+    """完全對齊助教簡報 p.41-42 的資料夾結構: Training_data/0/xxxx.png"""
+    train_dir = Path(train_dir)
+    data = []
+    target = []
+
+    # 依序讀取 0, 1, 2, ... 子資料夾
+    for label_name in sorted(os.listdir(train_dir)):
+        label_path = train_dir / label_name
+        if not label_path.is_dir() or not label_name.isdigit():
+            continue
+        label_int = int(label_name)
+        for filename in sorted(os.listdir(label_path)):
+            if filename.lower().endswith(".png"):
+                img_path = label_path / filename
+                img = Image.open(img_path).convert("L").resize((28, 28))
+                data.append(np.array(img, dtype=np.uint8).reshape(784))
+                target.append(label_int)
+
+    if len(data) == 0:
+        raise ValueError(f"在 {train_dir} 中找不到任何子資料夾與 .png 圖片！請確認路徑層級。")
+    return np.array(data, dtype=np.uint8), np.array(target, dtype=np.uint8)
 
 
-def read_labels(path):
-    """Read and validate IDX digit labels."""
-    with gzip.open(path, "rb") as file:
-        data = file.read()
-    if len(data) < 8:
-        raise ValueError(f"{path}: label header is incomplete")
-    magic, count = struct.unpack(">II", data[:8])
-    if magic != 2049:
-        raise ValueError(f"{path}: expected IDX labels")
-    if count == 0 or len(data) != 8 + count:
-        raise ValueError(f"{path}: label count or payload size is invalid")
-    labels = np.frombuffer(data, dtype=np.uint8, offset=8)
-    if np.any(labels > 9):
-        raise ValueError(f"{path}: labels must be digits from 0 to 9")
-    return labels
+def load_testing_pngs(test_dir):
+    """完全對齊助教簡報 p.53: 讀取 Testing_data 內的 0000.png, 0001.png..."""
+    test_dir = Path(test_dir)
+    filenames = [f for f in os.listdir(test_dir) if f.lower().endswith(".png")]
+    # 依照檔名數字大小排序 (確保 0000, 0001, 0002... 順序絕對正確)
+    filenames.sort(key=lambda f: int(os.path.splitext(f)[0]) if os.path.splitext(f)[0].isdigit() else f)
 
+    data = []
+    txt_names = []
+    for filename in filenames:
+        img_path = test_dir / filename
+        img = Image.open(img_path).convert("L").resize((28, 28))
+        data.append(np.array(img, dtype=np.uint8).reshape(784))
+        txt_names.append(os.path.splitext(filename)[0])  # 去除 .png 副檔名
 
-def load_mnist(data_dir):
-    """Return train images/labels and test images/labels as uint8 arrays."""
-    data_dir = Path(data_dir)
-    train_images = read_images(data_dir / "train-images-idx3-ubyte.gz")
-    train_labels = read_labels(data_dir / "train-labels-idx1-ubyte.gz")
-    test_images = read_images(data_dir / "t10k-images-idx3-ubyte.gz")
-    test_labels = read_labels(data_dir / "t10k-labels-idx1-ubyte.gz")
-    if len(train_images) != len(train_labels):
-        raise ValueError("train image and label counts differ")
-    if len(test_images) != len(test_labels):
-        raise ValueError("test image and label counts differ")
-    return train_images, train_labels, test_images, test_labels
-
+    if len(data) == 0:
+        raise ValueError(f"在 {test_dir} 中找不到任何 .png 測試圖片！")
+    return np.array(data, dtype=np.uint8), txt_names
 
 def initialize_parameters(hidden_layers, rng):
     """Create 784 -> hidden_layers -> 10 weights and bias rows."""
@@ -81,6 +78,7 @@ def forward(x, weights, biases):
         z = activations[-1] @ weights[layer] + biases[layer]
         z_values.append(z)
         if layer == len(weights) - 1:
+            z_stable = z - np.max(z, axis=1, keepdims=True)
             exp_z = np.exp(z)
             a = exp_z / np.sum(exp_z, axis=1, keepdims=True)
         else:
@@ -139,57 +137,50 @@ def train_epoch(images, labels, weights, biases, batch_size, learning_rate, rng)
 
     return total_loss / len(labels), correct / len(labels)
 
-
-def accuracy(images, labels, weights, biases, batch_size):
-    """Evaluate the current parameters without updating them."""
-    correct = 0
-    for start in range(0, len(labels), batch_size):
+def predict_all(images, weights, biases, batch_size=256):
+    """Predict class labels (0-9) for an array of images."""
+    preds = []
+    for start in range(0, len(images), batch_size):
         x = images[start : start + batch_size].astype(np.float64) / 255.0
         _, activations = forward(x, weights, biases)
-        predictions = np.argmax(activations[-1], axis=1)
-        correct += np.count_nonzero(predictions == labels[start : start + batch_size])
-    return correct / len(labels)
-
+        preds.append(np.argmax(activations[-1], axis=1))
+    return np.concatenate(preds)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", type=Path, default=Path("data/mnist"))
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--learning-rate", type=float, default=0.01)
-    parser.add_argument("--hidden-layers", type=int, nargs="*", default=[128])
+    parser.add_argument("--train-dir", type=Path, required=True, help="訓練資料夾路徑 (內含 0~9 子資料夾)")
+    parser.add_argument("--test-dir", type=Path, default=None, help="助教 USB 給的測試資料夾路徑")
+    parser.add_argument("--student-id", type=str, default="Student_ID", help="你的學號 (將輸出 學號.txt)")
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--learning-rate", type=float, default=0.05)
+    parser.add_argument("--hidden-layers", type=int, nargs="*", default=[256, 128])
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
-    if args.epochs <= 0 or args.batch_size <= 0 or args.learning_rate <= 0:
-        parser.error("epochs, batch size, and learning rate must be positive")
-    if any(width <= 0 for width in args.hidden_layers):
-        parser.error("hidden-layer widths must be positive")
-
-    try:
-        train_images, train_labels, test_images, test_labels = load_mnist(args.data_dir)
-    except (OSError, ValueError) as error:
-        parser.exit(2, f"MNIST data error: {error}\n")
-
+    
+    all_images, all_labels = load_training_pngs(args.train_dir)
     rng = np.random.default_rng(args.seed)
+    perm = rng.permutation(len(all_labels))
+    all_images, all_labels = all_images[perm], all_labels[perm]
+
     weights, biases = initialize_parameters(tuple(args.hidden_layers), rng)
-    layer_sizes = (784, *args.hidden_layers, 10)
-    print(f"network: {layer_sizes}")
-    print(f"examples: train={len(train_labels)}, test={len(test_labels)}")
+    print(f"載入訓練圖片總數: {len(all_labels)}, 網路結構: {(784, *args.hidden_layers, 10)}")
+    
     for epoch in range(1, args.epochs + 1):
-        mean_loss, train_accuracy = train_epoch(
-            train_images, train_labels, weights, biases,
+        mean_loss, train_acc = train_epoch(
+            all_images, all_labels, weights, biases,
             args.batch_size, args.learning_rate, rng,
         )
-        # These train metrics were collected as the weights changed in this epoch.
-        print(
-            f"epoch {epoch}/{args.epochs}: "
-            f"train mean loss={mean_loss:.4f}, "
-            f"train accuracy during updates={train_accuracy:.2%}"
-        )
+        print(f"Epoch {epoch:02d}/{args.epochs:02d} - loss={mean_loss:.4f}, train_acc={train_acc:.2%}")
 
-    test_accuracy = accuracy(test_images, test_labels, weights, biases, args.batch_size)
-    print(f"final test accuracy={test_accuracy:.2%}")
-
+    if args.test_dir is not None:
+        test_images, txt_names = load_testing_pngs(args.test_dir)
+        predictions = predict_all(test_images, weights, biases, args.batch_size)
+        result_path = f"{args.student_id}.txt"
+        with open(result_path, "w", encoding="utf-8") as f:
+            for name, ans in zip(txt_names, predictions):
+                f.write(f"{name} {int(ans)}\n")
+        print(f"\n[完成] 已讀取 {len(txt_names)} 張測試圖，並成功輸出至: {result_path}")
 
 if __name__ == "__main__":
     main()
