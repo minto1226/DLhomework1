@@ -61,9 +61,9 @@ OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --data-dir data/mnist --epochs 5 
 
 ## 現場版：`phase2_train.py`
 
-這個檔案現在直接讀取 `Training_data/0/*.png` 至 `Training_data/9/*.png`，以 NumPy 實作前向傳播、反向傳播和 mini-batch SGD；Pillow 只負責讀取 PNG。圖片轉灰階、縮放到 28×28、展平為 784 維，再除以 255。保留 one-hot、`delta = (P - Y) / B`，並加入 Softmax 減最大值、交叉熵 `1e-12` 平滑、每輪 shuffle、學習率遞減和訓練／驗證指標。預設將已標記資料隨機留出 10% 作驗證；若有獨立驗證資料夾，可傳 `--val-dir`。
+這個檔案現在可讀取數字子資料夾或同一層檔名帶標籤的 PNG，細節見文末「訓練 PNG 自動辨識」。網路以 NumPy 實作前向傳播、反向傳播和 mini-batch SGD；Pillow 只負責讀取 PNG。圖片轉灰階、縮放到 28×28、展平為 784 維，再除以 255。保留 one-hot、`delta = (P - Y) / B`，並加入 Softmax 減最大值、交叉熵 `1e-12` 平滑、每輪 shuffle、學習率遞減和訓練／驗證指標。預設將已標記資料隨機留出 10% 作驗證；若有獨立驗證資料夾，可傳 `--val-dir`。
 
-助教的教學投影片展示數字子資料夾作為**範例**；作業 PDF 並沒有保證現場發下的有標籤資料一定採同樣結構。收到資料時，先確認最外層包含 `0` 到 `9` 的子資料夾。測試圖片則應放在同一個扁平資料夾內，例如 `Testing_data/0000.png`、`Testing_data/0x00.png`。
+助教的教學投影片展示數字子資料夾作為**範例**；作業 PDF 並沒有保證現場發下的有標籤資料一定採同樣結構。收到資料時，請確認有標籤圖片放在數字子資料夾中，或直接放在訓練資料夾且檔名帶標籤。測試圖片則應放在同一個扁平資料夾內，例如 `Testing_data/0000.png`、`Testing_data/0x00.png`。
 
 現場先拿到訓練集、稍後才拿到測試集時，先執行以下指令。把 `YOUR_ID` 換成真實學號；**訓練後請保持程式與終端機開啟**，收到測試集時在提示處輸入其資料夾路徑：
 
@@ -180,3 +180,22 @@ python3 score_local_predictions.py
 ```
 
 這會在 `data/mnist_png_split/LOCAL_TEST.txt` 寫出 100 行、無表頭的「檔名去掉 `.png`、空白、預測數字」，每張測試圖片一行。`score_local_predictions.py` 只在預測完成後，對照資料夾外的本機答案。本次完整試跑為 **98/100 正確（98.00%）**；實際繳交時請將 `--student-id` 改為自己的學號，且現場測試集的答案不會提供給程式。
+
+## 訓練 PNG 自動辨識：數字子資料夾或檔名標籤
+
+`phase2_train.py` 現在會查看 `--train-dir` 指向的**那一層**：若圖片在數字子資料夾，使用原本的 `load_training_pngs()`；若 PNG 直接在該層，使用 `load_training_pngs_from_filenames()`。判斷依據是圖片位置，**不是子資料夾數量**，所以即使只有 `train/1/*.png` 一個類別資料夾，仍會使用原本的載入函式。`--val-dir` 若有提供，也會獨立使用相同規則；不需要額外指定格式參數。
+
+```text
+train/                    train/
+  1/a.png                   1.png
+  1/b.png                   1 (2).png
+  5/c.png                   5.png
+```
+
+右側檔名標籤格式只接受單一數字 `0` 至 `9`，後面可接「空白、括號內的流水號」，例如 `1.png`、`1 (2).png`。`0001.png` 無法可靠判斷是標籤還是圖片編號，因此會報錯。兩種排列若混在同一個資料夾，也會報錯，避免略過部分圖片；此時請整理資料或將 `--train-dir` 指向正確的那一層。`--test-dir` 仍是無標籤扁平 PNG 資料夾，測試檔名不受訓練標籤規則限制。
+
+兩種訓練排列都使用同一個指令形式：
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir ./train --val-dir ./val --test-dir ./test --student-id YOUR_ID
+```

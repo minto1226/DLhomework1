@@ -1,7 +1,8 @@
 """Train and predict PNG digits with a NumPy multilayer network.
 
-Training_data has digit subfolders (0 through 9); Testing_data is a flat PNG
-folder. When test data arrives later, keep this process open at its prompt:
+Training_data can have digit subfolders or flat PNGs named like 1.png and
+1 (2).png. Testing_data is a flat PNG folder. When test data arrives later,
+keep this process open at its prompt:
     python3 phase2_train.py --train-dir ./Training_data --student-id YOUR_ID
 
 If both folders are already available:
@@ -10,6 +11,7 @@ If both folders are already available:
 
 import argparse
 from pathlib import Path
+import re
 import numpy as np
 from PIL import Image
 
@@ -37,6 +39,61 @@ def load_training_pngs(train_dir):
     if len(data) == 0:
         raise ValueError(f"在 {train_dir} 中找不到任何子資料夾與 .png 圖片！請確認路徑層級。")
     return np.array(data, dtype=np.uint8), np.array(target, dtype=np.uint8)
+
+
+def load_training_pngs_from_filenames(train_dir):
+    """讀取同一層的 0.png、1 (2).png 等圖片，從檔名取得 0 至 9 標籤。"""
+    train_dir = Path(train_dir)
+    if not train_dir.is_dir():
+        raise ValueError(f"訓練資料夾不存在: {train_dir}")
+    paths = sorted(
+        (path for path in train_dir.iterdir() if path.is_file() and path.suffix.lower() == ".png"),
+        key=lambda path: path.name,
+    )
+    if not paths:
+        raise ValueError(f"在 {train_dir} 中找不到任何 .png 訓練圖片！")
+
+    data = []
+    target = []
+    for img_path in paths:
+        match = re.fullmatch(r"([0-9])(?: \([0-9]+\))?", img_path.stem)
+        if match is None:
+            raise ValueError(f"無法從檔名取得 0 到 9 標籤: {img_path}；請使用 1.png 或 1 (2).png 形式")
+        with Image.open(img_path) as img:
+            data.append(np.asarray(img.convert("L").resize((28, 28)), dtype=np.uint8).reshape(784))
+        target.append(int(match.group(1)))
+
+    return np.array(data, dtype=np.uint8), np.array(target, dtype=np.uint8)
+
+
+def detect_training_layout(train_dir):
+    """用圖片位置判斷格式；一個數字子資料夾仍算子資料夾格式。"""
+    train_dir = Path(train_dir)
+    if not train_dir.is_dir():
+        raise ValueError(f"訓練資料夾不存在: {train_dir}")
+
+    entries = list(train_dir.iterdir())
+    root_pngs = [path for path in entries if path.is_file() and path.suffix.lower() == ".png"]
+    digit_dirs = [path for path in entries if path.is_dir() and path.name.isdigit()]
+    other_dirs = [path for path in entries if path.is_dir() and not path.name.isdigit() and not path.name.startswith(".")]
+
+    if root_pngs and digit_dirs:
+        raise ValueError(f"{train_dir} 同時有根目錄 PNG 與數字子資料夾，請分開存放訓練圖片")
+    if other_dirs:
+        raise ValueError(f"{train_dir} 有無法辨識的子資料夾: {other_dirs[0].name}；請將 --train-dir 指向圖片或數字子資料夾所在的那一層")
+    if root_pngs:
+        return "filenames"
+    if digit_dirs:
+        return "digit_subfolders"
+    raise ValueError(f"在 {train_dir} 找不到根目錄 PNG 或 0 到 9 數字子資料夾；請確認 --train-dir 路徑")
+
+
+def load_training_pngs_auto(train_dir):
+    """保留兩種獨立載入函式，依資料排列選擇其一。"""
+    layout = detect_training_layout(train_dir)
+    if layout == "digit_subfolders":
+        return load_training_pngs(train_dir)
+    return load_training_pngs_from_filenames(train_dir)
 
 
 def load_testing_pngs(test_dir):
@@ -167,8 +224,8 @@ def predict_all(images, weights, biases, batch_size=256):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--train-dir", type=Path, required=True, help="訓練資料夾路徑 (內含 0~9 子資料夾)")
-    parser.add_argument("--val-dir", type=Path, default=None, help="可選的獨立驗證資料夾 (內含 0~9 子資料夾)")
+    parser.add_argument("--train-dir", type=Path, required=True, help="訓練資料夾：數字子資料夾或檔名標籤 PNG")
+    parser.add_argument("--val-dir", type=Path, default=None, help="可選的獨立驗證資料夾，支援同樣兩種格式")
     parser.add_argument("--test-dir", type=Path, default=None, help="助教 USB 給的測試資料夾路徑")
     parser.add_argument("--student-id", type=str, default=None, help="你的學號 (將輸出 學號.txt)")
     parser.add_argument("--epochs", type=int, default=30)
@@ -197,7 +254,10 @@ def main():
     ):
         parser.error(f"測試資料夾沒有 PNG 圖片: {args.test_dir}")
 
-    all_images, all_labels = load_training_pngs(args.train_dir)
+    try:
+        all_images, all_labels = load_training_pngs_auto(args.train_dir)
+    except (ValueError, OSError) as error:
+        parser.error(f"訓練資料載入失敗: {error}")
     rng = np.random.default_rng(args.seed)
     perm = rng.permutation(len(all_labels))
     all_images, all_labels = all_images[perm], all_labels[perm]
@@ -209,7 +269,10 @@ def main():
         val_images, val_labels = all_images[:val_count], all_labels[:val_count]
         train_images, train_labels = all_images[val_count:], all_labels[val_count:]
     else:
-        val_images, val_labels = load_training_pngs(args.val_dir)
+        try:
+            val_images, val_labels = load_training_pngs_auto(args.val_dir)
+        except (ValueError, OSError) as error:
+            parser.error(f"驗證資料載入失敗: {error}")
         train_images, train_labels = all_images, all_labels
 
     weights, biases = initialize_parameters(tuple(args.hidden_layers), rng)
