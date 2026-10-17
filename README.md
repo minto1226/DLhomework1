@@ -24,9 +24,9 @@ python3 phase2_multilayer.py
 
 執行範例仍使用一筆合成輸入，檢查各層形狀及代表性權重的數值梯度；它不是 MNIST 完整訓練程式。Phase 2 的重點是理解迴圈如何對應 Phase 1 逐層寫出的鏈鎖律。
 
-## Phase 2 延伸：mini-batch 與 epoch 訓練
+## Phase 2 延伸：mini-batch 與 epoch 訓練（IDX 實驗紀錄）
 
-`phase2_train.py` 將 Phase 2 的多層前向、反向迴圈套用到真實 MNIST。每個 epoch 先打亂 60,000 筆訓練資料，按 batch 更新參數；最後不足一個 batch 的樣本也會訓練。保留 one-hot 標籤、基本 Softmax 和交叉熵，讓 Phase 3 再處理標籤記憶體用量與數值穩定性。
+這節保留先前以 IDX 版 MNIST 做的實驗紀錄。當時的 `phase2_train.py` 將 Phase 2 的多層前向、反向迴圈套用到真實 MNIST：每個 epoch 打亂 60,000 筆訓練資料、按 batch 更新參數，最後不足一個 batch 的樣本也會訓練。當時保留 one-hot 標籤、基本 Softmax 和交叉熵。**目前的 `phase2_train.py` 已改為讀取 PNG 資料夾，舊的 `--data-dir` 參數不再適用；現行操作方式見下一節。**
 
 這裡使用 [CVDF Foundation 提供的 MNIST 鏡像](https://github.com/cvdfoundation/mnist/blob/master/README.md)，下載原始 IDX gzip 格式的圖片和標籤。下載檔只放在本機的 `data/mnist/`，Git 不會追蹤 `data/`：
 
@@ -37,9 +37,9 @@ for name in train-images-idx3-ubyte.gz train-labels-idx1-ubyte.gz t10k-images-id
 done
 ```
 
-需要 Python 3 與 NumPy；從專案根目錄執行：
+當時使用的參數如下，僅作實驗紀錄，**不要用於目前版本**：
 
-```bash
+```text
 OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --data-dir data/mnist --epochs 5 --batch-size 64 --learning-rate 0.05 --hidden-layers 256 128
 ```
 
@@ -57,7 +57,29 @@ OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --data-dir data/mnist --epochs 5 
 
 最後在 MNIST 測試集的準確率為 **96.98%**。
 
-作業現場的資料格式是 28×28 PNG，與這裡的 IDX 不同；`phase2_train.py` 當時尚未包含 PNG 載入及指定格式的預測輸出，下節的課堂範圍版才補上。`phase1_baseline.py` 和 `phase2_multilayer.py` 保留原本的逐步學習紀錄。
+作業現場的資料格式是 28×28 PNG，與這裡的 IDX 不同；`phase2_train.py` 當時尚未包含 PNG 載入及指定格式的預測輸出，後來補成下面的現場版。`phase1_baseline.py` 和 `phase2_multilayer.py` 保留原本的逐步學習紀錄。
+
+## 現場版：`phase2_train.py`
+
+這個檔案現在直接讀取 `Training_data/0/*.png` 至 `Training_data/9/*.png`，以 NumPy 實作前向傳播、反向傳播和 mini-batch SGD；Pillow 只負責讀取 PNG。圖片轉灰階、縮放到 28×28、展平為 784 維，再除以 255。保留 one-hot、`delta = (P - Y) / B`，並加入 Softmax 減最大值、交叉熵 `1e-12` 平滑、每輪 shuffle、學習率遞減和訓練／驗證指標。預設將已標記資料隨機留出 10% 作驗證；若有獨立驗證資料夾，可傳 `--val-dir`。
+
+助教的教學投影片展示數字子資料夾作為**範例**；作業 PDF 並沒有保證現場發下的有標籤資料一定採同樣結構。收到資料時，先確認最外層包含 `0` 到 `9` 的子資料夾。測試圖片則應放在同一個扁平資料夾內，例如 `Testing_data/0000.png`、`Testing_data/0x00.png`。
+
+現場先拿到訓練集、稍後才拿到測試集時，先執行以下指令。把 `YOUR_ID` 換成真實學號；**訓練後請保持程式與終端機開啟**，收到測試集時在提示處輸入其資料夾路徑：
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir ./Training_data --student-id YOUR_ID
+```
+
+若兩份資料一開始都已在本機，可一次指定：
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir ./Training_data --test-dir ./Testing_data --student-id YOUR_ID
+```
+
+每個 epoch 印出 `train_loss`、`train_acc`、`val_acc`。預測結果寫在執行時的工作目錄，檔名是 `YOUR_ID.txt`；無表頭、每張測試圖恰好一行，格式為「原檔名去掉 `.png`、空白、預測數字」。互動模式輸出後還可輸入下一輪測試資料夾，以同一組權重產生新結果，**會覆寫同名文字檔**；完成後直接 Enter 結束。目前這份程式**不會保存模型參數**，因此若關閉程式、或只執行訓練卻未等待測試資料夾，就要重新訓練才能產生結果。其他可調參數有 `--epochs`、`--batch-size`、`--learning-rate`、`--anneal-factor`、`--hidden-layers` 和 `--seed`。
+
+在這台電腦以 60,000 張本機 PNG、預設網路 `(256, 128)`、batch size `32` 和 `OPENBLAS_NUM_THREADS=1` 實測，讀圖加 1 個 epoch 約 35 秒、峰值記憶體約 159 MB；現場資料量和電腦速度不同，耗時會變動。預設 30 個 epoch 可能需要十幾分鐘；若時間不足，可在指令加 `--epochs 5`，並看驗證準確率決定是否重新訓練。請預留寫出和檢查 `YOUR_ID.txt` 的時間。
 
 ## 課堂範圍版：PNG 訓練、驗證與預測輸出
 
@@ -113,3 +135,48 @@ python3 coursework_mlp.py --predict-dir data/mnist_png/test --student-id A123456
 | 5 | 0.040725 | 0.1559 | 95.73% | 95.18% |
 
 另外，這次從 MNIST 測試集中取前 100 張轉為無標籤 PNG，產生了 100 行預測，與原標籤比對有 98 張正確；此 100 張結果只是輸出流程檢查，並非完整測試集準確率。若助教現場提供不同的標籤格式，需依實際格式調整 `load_labeled_pngs()`；目前資料夾規則是我們的約定，並非 PDF 指定。
+
+## 本機分割訓練集與驗證集
+
+本機 `data/mnist_png/train` 已有 60,000 張依數字子資料夾排列的有標籤 MNIST PNG；`data/mnist_png/test` 另有 10,000 張無標籤 PNG，留作模擬現場測試。無須再下載資料。已執行下列指令，使用固定亂數種子按類別分割原有訓練圖，預設來源為 `data/mnist_png/train`，輸出至 `data/mnist_png_split`：
+
+```bash
+python3 split_labeled_pngs.py
+```
+
+分割後有 **54,000 張訓練圖**與 **6,000 張驗證圖**，兩組都採用相同的數字子資料夾格式：
+
+```text
+data/mnist_png_split/
+  train/0/*.png ... train/9/*.png
+  val/0/*.png   ... val/9/*.png
+```
+
+先用一個 epoch 試跑載入、訓練及驗證流程：
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir data/mnist_png_split/train --val-dir data/mnist_png_split/val --epochs 1
+```
+
+`data/mnist_png/test` 保持原本扁平排列，不參與訓練或驗證；若要模擬產生學號預測檔，再加 `--test-dir data/mnist_png/test --student-id 你的學號`。
+
+已核對每類圖片在訓練與驗證集間沒有重疊，合起來正好涵蓋原本的 60,000 張；以現行 `phase2_train.py` 跑 1 個 epoch 成功，`train_loss=0.1853`、`train_acc=94.38%`、`val_acc=93.93%`。輸出資料夾已存在時，切分腳本會拒絕覆蓋；若需另做切分，可使用 `--output-dir` 指定新路徑。
+
+## 本機測試集與完整流程
+
+已從原本**獨立**的 10,000 張 MNIST 測試圖，固定亂數抽出每個數字 10 張，共 100 張，放在 `data/mnist_png_split/test/`。這個資料夾只有直接放置的 PNG，沒有標籤子資料夾，符合簡報展示的測試輸入格式。原始測試圖不變，訓練與驗證資料也不使用這 100 張。可用下列資料準備指令重現；若目標資料夾已存在，腳本會拒絕覆蓋，請改用新的 `--output-dir`：
+
+```bash
+python3 sample_test_pngs.py
+```
+
+本機答案另存於 `data/mnist_png_split/test_ground_truth.csv`，**不在 `test/` 內，也不傳給模型**。要模擬訓練、驗證、讀取測試圖及產生預測文字檔，可從專案根目錄執行：
+
+```bash
+cd data/mnist_png_split
+OPENBLAS_NUM_THREADS=1 python3 ../../phase2_train.py --train-dir train --val-dir val --test-dir test --student-id LOCAL_TEST --epochs 1
+cd ../..
+python3 score_local_predictions.py
+```
+
+這會在 `data/mnist_png_split/LOCAL_TEST.txt` 寫出 100 行、無表頭的「檔名去掉 `.png`、空白、預測數字」，每張測試圖片一行。`score_local_predictions.py` 只在預測完成後，對照資料夾外的本機答案。本次完整試跑為 **98/100 正確（98.00%）**；實際繳交時請將 `--student-id` 改為自己的學號，且現場測試集的答案不會提供給程式。
