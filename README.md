@@ -199,3 +199,55 @@ train/                    train/
 ```bash
 OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir ./train --val-dir ./val --test-dir ./test --student-id YOUR_ID
 ```
+
+## 本機四種訓練資料排列測試
+
+從 `data/mnist_png_split/train` 的有標籤圖片及 `data/mnist_png_split/test` 的獨立測試圖片，建立四份訓練集與兩份無標籤測試集：
+
+```bash
+python3 prepare_four_layout_cases.py
+```
+
+| 情況 | 訓練資料夾 | 標籤來源 | 測試資料夾 |
+|---|---|---|---|
+| 1：全部數字，分資料夾 | `data/case1_digit_folders` | `0/`～`9/` 子資料夾名稱 | `data/test_all_digits` |
+| 2：僅 1、3、5、7、9，分資料夾 | `data/case2_odd_digit_folders` | 奇數子資料夾名稱 | `data/test_odd_digits` |
+| 3：全部數字，同一層 | `data/case3_flat_filenames` | `1.png`、`1 (2).png` 等檔名 | `data/test_all_digits` |
+| 4：僅 1、3、5、7、9，同一層 | `data/case4_odd_flat_filenames` | 圖片檔名 | `data/test_odd_digits` |
+
+情況 1、3 各有 **54,000** 張訓練圖；情況 2、4 各有 **27,457** 張。完整測試集有 **100** 張（每個數字 10 張），奇數測試集有 **50** 張（每個奇數 10 張）。四組訓練圖都從同一份既有訓練集複製，測試圖則來自獨立的 MNIST 測試集，來源資料保持原樣。產生腳本若發現任何目標已存在，會拒絕覆蓋；四份圖檔約占額外 643 MB。
+
+從專案根目錄各跑一個 epoch 檢查載入、訓練與預測流程：
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir data/case1_digit_folders --test-dir data/test_all_digits --student-id CASE1 --epochs 1
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir data/case2_odd_digit_folders --test-dir data/test_odd_digits --student-id CASE2 --epochs 1
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir data/case3_flat_filenames --test-dir data/test_all_digits --student-id CASE3 --epochs 1
+OPENBLAS_NUM_THREADS=1 python3 phase2_train.py --train-dir data/case4_odd_flat_filenames --test-dir data/test_odd_digits --student-id CASE4 --epochs 1
+```
+
+未提供 `--val-dir`，程式會從各自訓練集留出 10% 作驗證。預測檔 `CASE1.txt`～`CASE4.txt` 會寫到執行指令時的專案根目錄。完整測試集與奇數測試集的本機答案分別在 `data/test_all_digits_ground_truth.csv`、`data/test_odd_digits_ground_truth.csv`，不放入測試圖片資料夾。可用 `python3 score_local_predictions.py --predictions CASE1.txt --answer-key data/test_all_digits_ground_truth.csv` 比對預測；其他情況替換對應檔名即可。四種指令均已在本機跑完一個 epoch，且分別產生與測試集檔名相符的 100、50、100、50 行預測。奇數訓練集仍使用 0～9 共十個輸出節點，預測時不會強制只選奇數。`data/` 已由 Git 忽略，這些本機圖片不會隨程式碼提交。
+
+## 另外的五類模型實驗：`Training_data` 與 `Testing_data3`
+
+`improved_five_digit_model.py` 是獨立的 NumPy 實驗模型。首次實驗使用 `data/Training_data` 中的數字 **2、4、5、6、9**，當時的輸出層為 5 類；模型架構是 `784 → 256 → 128 → 類別數`、ReLU、Softmax、交叉熵、手寫反向傳播和 Adam；Pillow 只用來讀 PNG。現在程式會依訓練資料夾中的數字子資料夾自動決定類別數，因此下方舊實驗的指令仍可重現五類模型。沒有使用現成神經網路框架，也不會修改原本的 `phase2_train.py` 或覆蓋 `711580103.txt`。
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 improved_five_digit_model.py --train-dir data/Training_data --test-dir data/Testing_data3 --ensemble-size 3 --output 711580103_improved.txt
+```
+
+`Training_data` 每類 4,000 張，共 20,000 張。固定亂數種子 `2026`，每類取 400 張作驗證、3,600 張作訓練；用驗證集選定 24 個 epoch，再以全部 20,000 張各自重訓三個不同初始值的模型，平均它們的測試機率。當次驗證**單模型**最佳為 **1,982/2,000（99.10%）**。作為同切分參考，用目前 `phase2_train.py` 的 `784 → 256 → 128 → 10`、mini-batch SGD 設定重訓 20 輪，最佳驗證結果為 **1,974/2,000（98.70%）**；這不代表原有 `711580103.txt` 的訓練設定完全相同。
+
+`data/Testing_data3` 沒有正確標籤，故**無法計算新舊模型在該測試集的正確率**。兩份預測都完整覆蓋 5,336 張 PNG；`711580103_improved.txt` 與**當時**的 `711580103.txt` 有 **5,227 筆相同、109 筆不同**，一致率 **97.96%**。有差異的檔名與兩邊預測另列在 `711580103_disagreements.csv`。這是預測一致率，不是測試正確率；驗證集的 0.40 個百分點差距也只代表這一次固定切分的結果。
+
+## 六類模型實驗：`Training_data2` 與 `Testing_data3`
+
+沿用 `improved_five_digit_model.py`，現在會依訓練集中的數字子資料夾自動建立輸出層。`data/Training_data2` 有 **2、3、4、5、6、9** 六類，各 4,000 張；使用 `784 → 256 → 128 → 6` 的 NumPy 網路。測試集仍是 `data/Testing_data3`，且不參與訓練或選擇輪數。從專案根目錄執行：
+
+```bash
+OPENBLAS_NUM_THREADS=1 python3 improved_five_digit_model.py --train-dir data/Training_data2 --test-dir data/Testing_data3 --ensemble-size 3 --output 711580103_improved_training2.txt
+```
+
+固定亂數種子 `2026`，每類留 400 張驗證：**21,600 張訓練、2,400 張驗證**。單模型在第 9 輪的最佳驗證正確率為 **2,371/2,400（98.79%）**；再以全部 24,000 張資料各自重訓三個模型 9 輪，平均測試預測機率後產生 `711580103_improved_training2.txt`。這個六類驗證數字與前述五類驗證數字使用不同的類別集合，不能直接比較優劣。
+
+本次直接和目前的 `711580103.txt` 比較，兩份預測均對上 `Testing_data3` 的 **5,336** 個檔名：**5,272 筆相同、64 筆不同，一致率 98.80%**。64 筆差異列於 `711580103_training2_disagreements.csv`。本次原版檔案的 SHA-256 為 `c43593d274f882307df49af07965edce50732a5f9f320f8a6247ab86d6498ef6`；它與上一節比較時的原版內容不同，因此兩次差異筆數不是同一份原版的前後對照。`Testing_data3` 沒有正確答案，**98.80% 是預測一致率，不是測試正確率**；無法據此判斷新舊模型哪一個在測試集較準。

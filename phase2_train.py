@@ -118,7 +118,6 @@ def load_testing_pngs(test_dir):
     return np.array(data, dtype=np.uint8), txt_names
 
 def initialize_parameters(hidden_layers, rng):
-    """Create 784 -> hidden_layers -> 10 weights and bias rows."""
     if any(width <= 0 for width in hidden_layers):
         raise ValueError("hidden-layer widths must be positive")
     layer_sizes = (784, *hidden_layers, 10)
@@ -131,7 +130,6 @@ def initialize_parameters(hidden_layers, rng):
 
 
 def forward(x, weights, biases):
-    """Save each z and activation for the backward loop."""
     z_values = []
     activations = [x]
     for layer in range(len(weights)):
@@ -148,7 +146,6 @@ def forward(x, weights, biases):
 
 
 def make_one_hot(labels):
-    """Keep the Phase 1 one-hot idea explicit for a whole mini-batch."""
     y = np.zeros((len(labels), 10))
     for row, label in enumerate(labels):
         y[row, int(label)] = 1.0
@@ -156,7 +153,6 @@ def make_one_hot(labels):
 
 
 def batch_gradients(x, y, weights, biases):
-    """Return mean loss, predictions, and mean gradients for one batch."""
     z_values, activations = forward(x, weights, biases)
     p = activations[-1]
     batch_size = len(x)
@@ -176,12 +172,11 @@ def batch_gradients(x, y, weights, biases):
 
 
 def train_epoch(images, labels, weights, biases, batch_size, learning_rate, rng):
-    """Shuffle, visit every example once, and update after each mini-batch."""
     order = rng.permutation(len(labels))
     total_loss = 0.0
     correct = 0
     for start in range(0, len(labels), batch_size):
-        indices = order[start : start + batch_size]  # Includes the short last batch.
+        indices = order[start : start + batch_size] 
         x = images[indices].astype(np.float64) / 255.0
         batch_labels = labels[indices]
         y = make_one_hot(batch_labels)
@@ -199,7 +194,6 @@ def train_epoch(images, labels, weights, biases, batch_size, learning_rate, rng)
 
 
 def evaluate(images, labels, weights, biases, batch_size):
-    """用 epoch 結束時的參數重新計算整個資料集的指標。"""
     loss_total = 0.0
     correct = 0
     for start in range(0, len(labels), batch_size):
@@ -213,7 +207,6 @@ def evaluate(images, labels, weights, biases, batch_size):
 
 
 def predict_all(images, weights, biases, batch_size=256):
-    """Predict class labels (0-9) for an array of images."""
     preds = []
     for start in range(0, len(images), batch_size):
         x = images[start : start + batch_size].astype(np.float64) / 255.0
@@ -228,10 +221,10 @@ def main():
     parser.add_argument("--val-dir", type=Path, default=None, help="可選的獨立驗證資料夾，支援同樣兩種格式")
     parser.add_argument("--test-dir", type=Path, default=None, help="助教 USB 給的測試資料夾路徑")
     parser.add_argument("--student-id", type=str, default=None, help="你的學號 (將輸出 學號.txt)")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--learning-rate", type=float, default=0.05)
-    parser.add_argument("--anneal-factor", type=float, default=0.95)
+    parser.add_argument("--anneal-factor", type=float, default=0.93)
     parser.add_argument("--hidden-layers", type=int, nargs="*", default=[256, 128])
     parser.add_argument("--seed", type=int, default=7)
     args = parser.parse_args()
